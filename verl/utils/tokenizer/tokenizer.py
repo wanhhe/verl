@@ -13,6 +13,8 @@
 # limitations under the License.
 """Utils for tokenization."""
 
+import json
+import os
 import types
 import warnings
 
@@ -190,7 +192,24 @@ def hf_processor(name_or_path, **kwargs):
         Returns ``None`` for text-only models (including AutoProcessor fallbacks to
         tokenizer backends such as ``TokenizersBackend``).
     """
-    from transformers import AutoConfig, AutoProcessor, PreTrainedTokenizerBase
+    from transformers import AutoConfig, AutoModel, AutoProcessor, PreTrainedTokenizerBase
+
+    # Qwen3-ASR is not natively supported by transformers (<= 4.57). Register the
+    # transformers backend shipped with the `qwen_asr` package if it is installed.
+    # This enables AutoProcessor/AutoConfig/AutoModel to resolve Qwen3ASRProcessor,
+    # Qwen3ASRConfig and Qwen3ASRForConditionalGeneration.
+    try:
+        from qwen_asr.core.transformers_backend import (
+            Qwen3ASRConfig,
+            Qwen3ASRForConditionalGeneration,
+            Qwen3ASRProcessor,
+        )
+
+        AutoConfig.register("qwen3_asr", Qwen3ASRConfig)
+        AutoModel.register(Qwen3ASRConfig, Qwen3ASRForConditionalGeneration)
+        AutoProcessor.register(Qwen3ASRConfig, Qwen3ASRProcessor)
+    except ImportError:
+        pass
 
     try:
         processor = AutoProcessor.from_pretrained(name_or_path, **kwargs)
@@ -199,6 +218,22 @@ def hf_processor(name_or_path, **kwargs):
         # Treat it as "no multimodal processor" and let callers use hf_tokenizer.
         if isinstance(processor, PreTrainedTokenizerBase):
             return None
+
+        # Qwen3-ASR stores its chat template in a standalone chat_template.json which
+        # transformers does not load automatically when tokenizer_config.json lacks a
+        # `chat_template` field. Fall back to reading it directly.
+        if (
+            getattr(processor, "tokenizer", None) is not None
+            and processor.tokenizer.chat_template is None
+            and isinstance(name_or_path, str)
+        ):
+            chat_template_path = os.path.join(name_or_path, "chat_template.json")
+            if os.path.exists(chat_template_path):
+                with open(chat_template_path, encoding="utf-8") as f:
+                    chat_template = json.load(f)
+                processor.tokenizer.chat_template = (
+                    chat_template.get("chat_template") if isinstance(chat_template, dict) else chat_template
+                )
 
         config = AutoConfig.from_pretrained(name_or_path, **kwargs)
 
@@ -228,6 +263,8 @@ def hf_processor(name_or_path, **kwargs):
                 model_class = Glm46VModel
             case "MllamaProcessor":
                 pass  # MllamaProcessor and MllamaModel doesn't have get_rope_index property
+            case "Qwen3ASRProcessor":
+                pass  # Qwen3-ASR uses standard 1D RoPE -> no get_rope_index to bind
             case "Gemma4Processor":
                 # Gemma4 uses standard 1D RoPE -> no get_rope_index to bind. Disable its strict
                 # per-image-token check (which Qwen's processor lacks).

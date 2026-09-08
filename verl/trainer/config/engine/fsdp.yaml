@@ -77,6 +77,9 @@ strategy: fsdp
 # Mixed precision training param dtype
 dtype: bfloat16 # ["bfloat16", "float16"]
 
+# Freeze the Qwen3-ASR audio encoder (thinker.audio_tower) and train only the LLM part
+freeze_audio_tower: true
+
 # QAT (Quantization-Aware Training) configuration
 qat:
 

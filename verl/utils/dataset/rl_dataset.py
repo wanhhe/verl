@@ -217,6 +217,12 @@ class RLHFDataset(Dataset):
                         images, videos, audios = self._process_multi_modal_info(
                             messages, self.image_patch_size, self.config
                         )
+                        if "Qwen3ASRProcessor" in processor.__class__.__name__:
+                            # Length filtering only needs the text token count. The
+                            # Qwen3-ASR processor requires raw waveforms (not paths)
+                            # and audio features are produced later in the rollout
+                            # tokenization path anyway, so skip audio here.
+                            audios = None
                         if images is None and videos is None and audios is None:
                             # only text prompt
                             return len(
@@ -324,6 +330,14 @@ class RLHFDataset(Dataset):
 
             content = message["content"]
             if not isinstance(content, str):
+                # Arrow struct serialization union-fills missing keys with None
+                # (e.g. a text item may carry "audio": None). This confuses chat
+                # templates and multimodal extraction that test key presence, so
+                # drop None-valued keys before passing the messages downstream.
+                for item in content:
+                    if isinstance(item, dict):
+                        for key in [k for k, v in item.items() if v is None]:
+                            del item[key]
                 continue
 
             content_list = []

@@ -11,6 +11,11 @@ custom_reward_function:
   path: null
   # The name of the reward function within the specified file. Default is 'compute_score'.
   name: compute_score
+  # Extra keyword arguments passed to the reward function (e.g. reward weights).
+  # Declared here so hydra's struct mode allows overriding them per task.
+  reward_kwargs:
+    cer_weight: 0.5
+    match_weight: 0.5
 
 # reward manager, see `verl/trainer/config/reward_manager.yaml` for details.
 reward_manager:

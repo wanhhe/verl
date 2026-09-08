@@ -18,6 +18,7 @@ The concrete Engine implementation using PyTorch FullyShardedDataParallel (FSDP)
 import gc
 import logging
 import os
+import types
 import warnings
 from contextlib import contextmanager, nullcontext
 from inspect import signature
@@ -261,6 +262,43 @@ class FSDPEngine(BaseEngine):
                     trust_remote_code=self.model_config.trust_remote_code,
                 )
 
+                # Qwen3-ASR: the outer model only exposes generate() and delegates
+                # forward to the inner thinker (audio encoder + text decoder).
+                # Delegate forward to the thinker while keeping the full module, so
+                # state_dict keys keep the `thinker.` prefix and stay compatible
+                # with the vLLM engine's weight sync.
+                if module.__class__.__name__ == "Qwen3ASRForConditionalGeneration":
+
+                    def _thinker_forward(self, *args, **kwargs):
+                        return self.thinker(*args, **kwargs)
+
+                    module.forward = types.MethodType(_thinker_forward, module)
+                    logger.info("Qwen3-ASR detected: delegating forward to the inner thinker module")
+
+                    # Qwen3-ASR ties lm_head with embed_tokens. FSDP cannot manage
+                    # a tied tensor from two different FSDP units (flat-param shards
+                    # diverge), so untie by copying the embedding into lm_head.
+                    thinker = module.thinker
+                    if getattr(thinker.config, "tie_word_embeddings", False) or getattr(
+                        thinker.config.text_config, "tie_word_embeddings", False
+                    ):
+                        thinker.lm_head.weight = torch.nn.Parameter(
+                            thinker.model.embed_tokens.weight.detach().clone()
+                        )
+                        logger.info("Qwen3-ASR: untied lm_head from embed_tokens for FSDP compatibility")
+
+                    if self.engine_config.freeze_audio_tower:
+                        audio_tower = getattr(module.thinker, "audio_tower", None)
+                        if audio_tower is not None:
+                            audio_tower.requires_grad_(False)
+                            n_frozen = sum(1 for p in audio_tower.parameters() if not p.requires_grad)
+                            logger.info(f"Qwen3-ASR audio tower frozen ({n_frozen} params not trainable)")
+                            # FSDP1 requires use_orig_params=True to flatten
+                            # parameters with mixed requires_grad states.
+                            if self.engine_config.strategy == "fsdp":
+                                self._fsdp_use_orig_params = True
+                                logger.info("FSDP use_orig_params set to True for frozen audio tower")
+
                 # Strip sub-modules listed in _verl_strip_modules (e.g.
                 # talker / code2wav for Qwen3-Omni Thinker-only training).
                 _strip_list = getattr(module, "_verl_strip_modules", [])
@@ -425,7 +463,9 @@ class FSDPEngine(BaseEngine):
                 sync_module_states=True,
                 device_mesh=self.device_mesh,
                 forward_prefetch=self.engine_config.forward_prefetch,
-                use_orig_params=self.engine_config.use_orig_params,
+                # Override for Qwen3-ASR with a frozen audio tower: FSDP1 requires
+                # use_orig_params=True to flatten mixed requires_grad parameters.
+                use_orig_params=getattr(self, "_fsdp_use_orig_params", self.engine_config.use_orig_params),
                 cpu_offload=cpu_offload,
             )
         elif self.engine_config.strategy == "fsdp2":
@@ -477,7 +517,11 @@ class FSDPEngine(BaseEngine):
     def _build_optimizer(self, module):
         from verl.workers.config.optimizer import build_optimizer
 
-        optimizer = build_optimizer(module.parameters(), self.optimizer_config)
+        # Exclude frozen parameters (e.g. Qwen3-ASR audio tower) from the optimizer
+        # to save optimizer-state memory.
+        optimizer = build_optimizer(
+            (param for param in module.parameters() if param.requires_grad), self.optimizer_config
+        )
 
         return optimizer
 

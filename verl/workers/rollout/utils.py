@@ -34,6 +34,15 @@ def get_max_position_embeddings(hf_config) -> int:
         text_config = getattr(hf_config, "text_config", None)
         if text_config is not None:
             max_len = getattr(text_config, "max_position_embeddings", None)
+    if max_len is None:
+        # Qwen3-ASR nests the text decoder config under thinker_config.
+        thinker_config = getattr(hf_config, "thinker_config", None)
+        if thinker_config is not None:
+            max_len = getattr(thinker_config, "max_position_embeddings", None)
+            if max_len is None:
+                text_config = getattr(thinker_config, "text_config", None)
+                if text_config is not None:
+                    max_len = getattr(text_config, "max_position_embeddings", None)
 
     if max_len is None:
         raise ValueError("max_position_embeddings not found in HFModelConfig!")
@@ -112,6 +121,50 @@ def qwen2_5_vl_dedup_image_tokens(prompt_ids: list[int], processor):
         return prompt_ids[mask].tolist()
     else:
         return prompt_ids
+
+
+def qwen3_asr_dedup_audio_tokens(prompt_ids: list[int], processor):
+    """Compress expanded audio pad tokens in prompt_ids for Qwen3-ASR.
+
+    ``Qwen3ASRProcessor`` expands a single ``<|audio_pad|>`` placeholder into one pad
+    token per audio feature frame. vLLM's Qwen3-ASR implementation expects the
+    unexpanded form (one ``<|audio_pad|>`` between ``<|audio_start|>`` and
+    ``<|audio_end|>``) and expands it by the audio feature length itself, so passing
+    the expanded ids leads to empty generations. For example,
+    ```
+    <|audio_start|><|audio_pad|><|audio_pad|>...<|audio_pad|><|audio_end|>
+    =>
+    <|audio_start|><|audio_pad|><|audio_end|>
+    ```
+    """
+    if (
+        processor is not None
+        and getattr(processor, "tokenizer", None) is not None
+        and "Qwen3ASRProcessor" in processor.__class__.__name__
+    ):
+        tokenizer = processor.tokenizer
+        start_id = tokenizer.convert_tokens_to_ids("<|audio_start|>")
+        end_id = tokenizer.convert_tokens_to_ids("<|audio_end|>")
+        pad_id = tokenizer.convert_tokens_to_ids("<|audio_pad|>")
+        if start_id is None or end_id is None or pad_id is None:
+            return prompt_ids
+
+        out: list[int] = []
+        in_audio_span = False
+        for token_id in prompt_ids:
+            if token_id == start_id:
+                in_audio_span = True
+                out.append(token_id)
+            elif token_id == end_id:
+                in_audio_span = False
+                out.append(token_id)
+            elif token_id == pad_id and in_audio_span and out and out[-1] == pad_id:
+                # keep only the first pad in the audio span
+                continue
+            else:
+                out.append(token_id)
+        return out
+    return prompt_ids
 
 
 def get_vision_placeholder_token_ids(processor) -> list[int]:

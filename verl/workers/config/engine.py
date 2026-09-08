@@ -298,6 +298,8 @@ class FSDPEngineConfig(EngineConfig):
     pad_to_length_bucket: int = 1024
     qat: QATEngineConfig = field(default_factory=QATEngineConfig)
     turbo_config: dict[str, Any] = field(default_factory=dict)
+    # Freeze the Qwen3-ASR audio encoder (thinker.audio_tower) and train only the LLM part.
+    freeze_audio_tower: bool = True
 
     def __post_init__(self):
         super().__post_init__()

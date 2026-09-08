@@ -76,6 +76,41 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 DEFAULT_ROUTING_CACHE_SIZE = 10000
 
 
+def _load_audio_waveforms(audios: list[Any], target_sr: int) -> list[Any]:
+    """Load audio payloads as mono ``np.ndarray`` waveforms at ``target_sr``.
+
+    Accepts file paths (``str``/``os.PathLike``) and dict payloads with a
+    ``path``/``audio``/``audio_url`` key. Waveforms passed in directly are
+    returned unchanged; unresolvable payloads are passed through as-is.
+    """
+    import soundfile as sf
+
+    waveforms = []
+    for audio in audios:
+        if isinstance(audio, np.ndarray):
+            waveforms.append(audio)
+            continue
+        if isinstance(audio, dict):
+            audio_path = audio.get("path") or audio.get("audio") or audio.get("audio_url")
+        elif isinstance(audio, str | os.PathLike):
+            audio_path = os.fspath(audio)
+        else:
+            waveforms.append(audio)
+            continue
+        if audio_path is None:
+            waveforms.append(audio)
+            continue
+
+        wav, sr = sf.read(audio_path, dtype="float32", always_2d=False)
+        wav = np.asarray(wav, dtype=np.float32)
+        if sr != target_sr:
+            import librosa
+
+            wav = librosa.resample(wav, orig_sr=sr, target_sr=target_sr)
+        waveforms.append(wav)
+    return waveforms
+
+
 class AgentLoopMetrics(BaseModel):
     """Agent loop performance metrics."""
 
@@ -308,9 +343,23 @@ class AgentLoopBase(ABC):
             if videos is not None:
                 multi_modal_data["videos"] = videos
             if audios is not None:
+                audios = await self._process_audio_payloads(audios)
                 multi_modal_data["audios"] = audios
 
         return multi_modal_data
+
+    async def _process_audio_payloads(self, audios: list[Any]) -> list[Any]:
+        """Convert audio file paths to 16kHz mono waveforms (``np.ndarray``).
+
+        vLLM's audio models (e.g. Qwen3-ASR) require raw waveforms rather than file
+        paths in ``multi_modal_data["audio"]``. Payloads that are already waveforms
+        or cannot be resolved to a path are passed through unchanged.
+        """
+        if not audios:
+            return audios
+        feature_extractor = getattr(self.processor, "feature_extractor", None)
+        target_sr = int(getattr(feature_extractor, "sampling_rate", 16000) or 16000)
+        return await self.loop.run_in_executor(None, lambda: _load_audio_waveforms(audios, target_sr))
 
     async def ct_build_initial_tokens(
         self,

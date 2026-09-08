@@ -156,6 +156,18 @@ def main(config):
     dataset = pd.concat(datasets, axis=0, ignore_index=True)
     chat_lst = dataset[config.data.prompt_key].tolist()
     chat_lst = [chat.tolist() for chat in chat_lst]
+
+    def _to_jsonable(obj):
+        # pandas/pyarrow may read nested lists in a parquet column as np.ndarray.
+        if isinstance(obj, np.ndarray):
+            return [_to_jsonable(item) for item in obj.tolist()]
+        elif isinstance(obj, dict):
+            return {key: _to_jsonable(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [_to_jsonable(item) for item in obj]
+        return obj
+
+    chat_lst = [_to_jsonable(chat) for chat in chat_lst]
     chat_numpy = np.array(chat_lst)
 
     # start native server

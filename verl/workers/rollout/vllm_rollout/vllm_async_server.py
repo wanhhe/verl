@@ -56,6 +56,7 @@ from verl.workers.rollout.utils import (
     get_max_position_embeddings,
     get_vision_placeholder_token_ids,
     qwen2_5_vl_dedup_image_tokens,
+    qwen3_asr_dedup_audio_tokens,
     run_uvicorn,
 )
 from verl.workers.rollout.vllm_rollout.utils import (
@@ -610,6 +611,7 @@ class vLLMHttpServer:
 
         sampling_params = SamplingParams(max_tokens=max_tokens, **sampling_params)
         prompt_ids = qwen2_5_vl_dedup_image_tokens(prompt_ids, self.model_config.processor)
+        prompt_ids = qwen3_asr_dedup_audio_tokens(prompt_ids, self.model_config.processor)
         multi_modal_data = {}
         if image_data is not None:
             multi_modal_data["image"] = image_data
@@ -618,13 +620,24 @@ class vLLMHttpServer:
         if audio_data is not None:
             multi_modal_data["audio"] = audio_data
 
-        prompt_kwargs = {"prompt_token_ids": prompt_ids, "multi_modal_data": multi_modal_data}
-        if mm_processor_kwargs:
-            prompt_kwargs["mm_processor_kwargs"] = mm_processor_kwargs
-        try:
-            prompt = TokensPrompt(**prompt_kwargs)
-        except TypeError:
-            prompt = prompt_kwargs
+        processor = self.model_config.processor
+        if processor is not None and "Qwen3ASRProcessor" in processor.__class__.__name__:
+            # vLLM 0.18's input processor does not pass multi_modal_data audio to
+            # the Qwen3-ASR processor for TokensPrompt inputs (empty generations /
+            # StopIteration). The string-prompt path works, so reconstruct the raw
+            # prompt from the (deduplicated) ids with the same tokenizer.
+            raw_prompt = processor.tokenizer.decode(prompt_ids, skip_special_tokens=False)
+            prompt: dict | TokensPrompt = {"prompt": raw_prompt, "multi_modal_data": multi_modal_data}
+            if mm_processor_kwargs:
+                prompt["mm_processor_kwargs"] = mm_processor_kwargs
+        else:
+            prompt_kwargs = {"prompt_token_ids": prompt_ids, "multi_modal_data": multi_modal_data}
+            if mm_processor_kwargs:
+                prompt_kwargs["mm_processor_kwargs"] = mm_processor_kwargs
+            try:
+                prompt = TokensPrompt(**prompt_kwargs)
+            except TypeError:
+                prompt = prompt_kwargs
 
         # Add lora request
         lora_request = None
