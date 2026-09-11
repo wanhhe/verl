@@ -38,6 +38,15 @@ rollout_top_p=${ROLLOUT_TOP_P:-1.0}
 rollout_tp=${ROLLOUT_TP:-1}                    # 1.7B fits one GPU; use DP replicas for scale
 rollout_gpu_mem_util=${ROLLOUT_GPU_MEM_UTIL:-0.5}
 
+# Custom ASR reward weights. Reward functions ignore knobs that do not apply to
+# their data source, so this run script can serve both pronoun and context-ASR.
+entity_weight=${ENTITY_WEIGHT:-0.35}
+reject_weight=${REJECT_WEIGHT:-0.25}
+entity_exact_weight=${ENTITY_EXACT_WEIGHT:-0.75}
+reject_gate_start=${REJECT_GATE_START:-0.50}
+reject_gate_full=${REJECT_GATE_FULL:-0.80}
+pronoun_exact_bonus=${PRONOUN_EXACT_BONUS:-0.50}
+
 FREEZE_AUDIO=${FREEZE_AUDIO:-true}
 
 total_epochs=${TOTAL_EPOCHS:-10}
@@ -113,6 +122,12 @@ REWARD=(
     reward.custom_reward_function.name=${REWARD_FUNC_NAME:-compute_score}
     reward.custom_reward_function.reward_kwargs.cer_weight=${CER_WEIGHT:-0.5}
     reward.custom_reward_function.reward_kwargs.match_weight=${MATCH_WEIGHT:-0.5}
+    +reward.custom_reward_function.reward_kwargs.entity_weight=${entity_weight}
+    +reward.custom_reward_function.reward_kwargs.reject_weight=${reject_weight}
+    +reward.custom_reward_function.reward_kwargs.entity_exact_weight=${entity_exact_weight}
+    +reward.custom_reward_function.reward_kwargs.reject_gate_start=${reject_gate_start}
+    +reward.custom_reward_function.reward_kwargs.reject_gate_full=${reject_gate_full}
+    +reward.custom_reward_function.reward_kwargs.pronoun_exact_bonus=${pronoun_exact_bonus}
 )
 
 TRAINER=(

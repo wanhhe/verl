@@ -25,8 +25,9 @@ ROLLOUT_N=${ROLLOUT_N:-6}                       # GRPO group size (Tongyi paper)
 ROLLOUT_TEMPERATURE=${ROLLOUT_TEMPERATURE:-1.0}
 ACTOR_LR=${ACTOR_LR:-1e-5}
 KL_LOSS_COEF=${KL_LOSS_COEF:-0.001}
-CER_WEIGHT=${CER_WEIGHT:-0.5}                   # reward = CER_WEIGHT*(1-CER) + MATCH_WEIGHT*pronoun_match
-MATCH_WEIGHT=${MATCH_WEIGHT:-0.5}
+CER_WEIGHT=${CER_WEIGHT:-0.6}                   # reward = CER + ordered-pronoun sequence score
+MATCH_WEIGHT=${MATCH_WEIGHT:-0.4}               # pronoun component weight (kept for CLI compatibility)
+PRONOUN_EXACT_BONUS=${PRONOUN_EXACT_BONUS:-0.5}
 MAX_PROMPT_LENGTH=${MAX_PROMPT_LENGTH:-4096}
 MAX_RESPONSE_LENGTH=${MAX_RESPONSE_LENGTH:-256}
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-3}
@@ -42,7 +43,8 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="$LOG_DIR/qwen3_asr_grpo_${TIMESTAMP}.log"
 echo "Log: $LOG_FILE"
 
-export CUDA_VISIBLE_DEVICES
+export VERL_ROOT CUDA_VISIBLE_DEVICES CER_WEIGHT MATCH_WEIGHT PRONOUN_EXACT_BONUS
+export REWARD_FUNC=${REWARD_FUNC:-$VERL_ROOT/examples/reward_funcs/asr_cer.py}
 
 # derive the number of GPUs from CUDA_VISIBLE_DEVICES
 N_GPUS=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | grep -c '[0-9]')

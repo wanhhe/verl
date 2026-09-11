@@ -15,7 +15,9 @@
 # Overridable env (passthrough to run_qwen3_asr_1_7b_fsdp.sh):
 #   CUDA_VISIBLE_DEVICES, LOG_DIR, MANIFEST_DIR, MODEL_PATH, PYTHON,
 #   TRAIN_BATCH_SIZE, PPO_MINI_BATCH_SIZE, ROLLOUT_N, ACTOR_LR, KL_LOSS_COEF,
-#   MATCH_WEIGHT, TOTAL_EPOCHS, SAVE_FREQ, TEST_FREQ, EXPERIMENT_NAME, ...
+#   CER_WEIGHT, ENTITY_WEIGHT, REJECT_WEIGHT, ENTITY_EXACT_WEIGHT,
+#   REJECT_GATE_START, REJECT_GATE_FULL, TOTAL_EPOCHS, SAVE_FREQ, TEST_FREQ,
+#   EXPERIMENT_NAME, ...
 
 set -euo pipefail
 
@@ -43,6 +45,14 @@ PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-32}            # PPO update minibatch
 PPO_MAX_TOKEN_LEN_PER_GPU=${PPO_MAX_TOKEN_LEN_PER_GPU:-32768}  # dynamic-bsz token cap per GPU
 ROLLOUT_N=${ROLLOUT_N:-6}                                 # GRPO group size: sampled outputs per prompt
 
+# reward = CER accuracy + must_emit entity score + gated must_reject score
+CER_WEIGHT=${CER_WEIGHT:-0.40}
+ENTITY_WEIGHT=${ENTITY_WEIGHT:-0.35}
+REJECT_WEIGHT=${REJECT_WEIGHT:-0.25}
+ENTITY_EXACT_WEIGHT=${ENTITY_EXACT_WEIGHT:-0.75}           # exact hit vs partial-edit signal inside entity score
+REJECT_GATE_START=${REJECT_GATE_START:-0.50}               # no rejection credit at/below this accuracy
+REJECT_GATE_FULL=${REJECT_GATE_FULL:-0.80}                 # full rejection credit at/above this accuracy
+
 # Derive the number of GPUs from CUDA_VISIBLE_DEVICES so Ray and the trainer
 # agree on trainer.n_gpus_per_node when running with fewer than 8 GPUs.
 NGPUS_PER_NODE=${NGPUS_PER_NODE:-$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | grep -c '[0-9]')}
@@ -52,9 +62,11 @@ export TRAIN_FILES=${TRAIN_FILES:-$MANIFEST_DIR/context_rl_train.parquet}
 export VAL_FILES=${VAL_FILES:-$MANIFEST_DIR/context_rl_test.parquet}
 export REWARD_FUNC=${REWARD_FUNC:-$VERL_ROOT/examples/reward_funcs/context_robustness.py}
 
-export CUDA_VISIBLE_DEVICES MODEL_PATH PYTHON NGPUS_PER_NODE \
+export VERL_ROOT CUDA_VISIBLE_DEVICES MODEL_PATH PYTHON NGPUS_PER_NODE \
     TEST_FREQ SAVE_FREQ TOTAL_EPOCHS TOTAL_TRAINING_STEPS \
-    TRAIN_BATCH_SIZE PPO_MINI_BATCH_SIZE PPO_MAX_TOKEN_LEN_PER_GPU ROLLOUT_N
+    TRAIN_BATCH_SIZE PPO_MINI_BATCH_SIZE PPO_MAX_TOKEN_LEN_PER_GPU ROLLOUT_N \
+    CER_WEIGHT ENTITY_WEIGHT REJECT_WEIGHT ENTITY_EXACT_WEIGHT \
+    REJECT_GATE_START REJECT_GATE_FULL
 
 mkdir -p "$LOG_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
