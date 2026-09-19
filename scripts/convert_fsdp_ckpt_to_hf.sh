@@ -8,11 +8,11 @@
 #       --output <output HF dir>
 #
 # Environment overrides:
-#   PYTHON   python interpreter (default: verl conda env)
+#   PYTHON   python interpreter (default: python from the active environment)
 
 set -euo pipefail
 
-PYTHON=${PYTHON:-/quark_speech_nas_zjk/users/wangzilin/miniconda3/envs/verl/bin/python}
+PYTHON=${PYTHON:-python}
 
 # ---- parse args ----
 CKPT=""
@@ -38,7 +38,7 @@ echo "==> output: $OUTPUT"
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."   # verl repo root
 
-$PYTHON scripts/convert_fsdp_ckpt_to_hf.py \
+"$PYTHON" scripts/convert_fsdp_ckpt_to_hf.py \
     --ckpt "$CKPT" \
     --model "$MODEL" \
     --output "$OUTPUT"
