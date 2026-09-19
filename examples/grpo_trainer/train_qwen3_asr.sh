@@ -17,9 +17,9 @@ cd "$VERL_ROOT"
 
 ############################ paths ###################################
 
-PYTHON=${PYTHON:-python}
-MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-ASR-1.7B}
-RL_DATASET_ROOT=${RL_DATASET_ROOT:-/root/autodl-tmp/Context-ASR}
+PYTHON=${PYTHON:-/root/miniconda3/envs/verl/bin/python}
+MODEL_PATH=${MODEL_PATH:-/root/autodl-tmp/Qwen3-ASR/finetuning/qwen3-asr-finetuning-out/checkpoint-1863}
+RL_DATASET_ROOT=${RL_DATASET_ROOT:-/root/autodl-tmp/verl/Context-ASR}
 RL_DATA_DIR=${RL_DATA_DIR:-$RL_DATASET_ROOT/rl/train}
 LOG_DIR=${LOG_DIR:-/root/autodl-tmp/verl/logs}
 OUTPUT_DIR=${OUTPUT_DIR:-/root/autodl-tmp/verl/checkpoints/qwen3_asr_mixed_grpo}
@@ -56,6 +56,7 @@ TOTAL_EPOCHS=${TOTAL_EPOCHS:-2}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-null}
 SAVE_FREQ=${SAVE_FREQ:-20}
 TEST_FREQ=${TEST_FREQ:-5}
+MAX_CKPT_TO_KEEP=${MAX_CKPT_TO_KEEP:-2}
 RESUME_MODE=${RESUME_MODE:-disable}
 
 PROJECT_NAME=${PROJECT_NAME:-verl_grpo_qwen3_asr}
@@ -108,6 +109,10 @@ if (( TRAIN_BATCH_SIZE < PPO_MINI_BATCH_SIZE || TRAIN_BATCH_SIZE % PPO_MINI_BATC
     echo "TRAIN_BATCH_SIZE must be divisible by and no smaller than PPO_MINI_BATCH_SIZE" >&2
     exit 1
 fi
+if ! [[ "$MAX_CKPT_TO_KEEP" =~ ^[0-9]+$ ]]; then
+    echo "MAX_CKPT_TO_KEEP must be a non-negative integer, got: $MAX_CKPT_TO_KEEP" >&2
+    exit 1
+fi
 
 mkdir -p "$LOG_DIR" "$OUTPUT_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -118,6 +123,7 @@ echo "Model:       $MODEL_PATH"
 echo "Dataset:     $RL_DATASET_ROOT"
 echo "GPUs:        $CUDA_VISIBLE_DEVICES ($NGPUS_PER_NODE per node)"
 echo "Checkpoints: $OUTPUT_DIR"
+echo "Keep latest: $MAX_CKPT_TO_KEEP checkpoints (0 means unlimited)"
 echo "Log:         $LOG_FILE"
 
 ########################### verl config ##############################
@@ -200,6 +206,8 @@ TRAINER=(
     trainer.n_gpus_per_node="$NGPUS_PER_NODE"
     trainer.nnodes="$NNODES"
     trainer.default_local_dir="$OUTPUT_DIR"
+    trainer.max_actor_ckpt_to_keep="$MAX_CKPT_TO_KEEP"
+    trainer.max_critic_ckpt_to_keep="$MAX_CKPT_TO_KEEP"
     trainer.save_freq="$SAVE_FREQ"
     trainer.test_freq="$TEST_FREQ"
     trainer.total_epochs="$TOTAL_EPOCHS"
