@@ -15,6 +15,7 @@ VERL_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$VERL_ROOT"
 
 : "${RL_DATA_DIR:?Set RL_DATA_DIR to the directory containing the four RL parquet files}"
+RL_DATASET_ROOT=${RL_DATASET_ROOT:-$(cd "$RL_DATA_DIR/../.." && pwd)}
 
 for parquet in ta_train.parquet ta_test.parquet context_train.parquet context_test.parquet; do
     if [[ ! -f "$RL_DATA_DIR/$parquet" ]]; then
@@ -43,5 +44,6 @@ export REJECT_GATE_FULL=${REJECT_GATE_FULL:-0.80}
 export EXPERIMENT_NAME=${EXPERIMENT_NAME:-qwen3_asr_mixed_grpo}
 
 bash "$VERL_ROOT/examples/grpo_trainer/train_qwen3_asr.sh" \
+    data.audio_root="$RL_DATASET_ROOT" \
     +reward.custom_reward_function.reward_kwargs.context_cer_weight=${CONTEXT_CER_WEIGHT} \
     "$@"

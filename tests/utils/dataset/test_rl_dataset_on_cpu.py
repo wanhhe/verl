@@ -33,8 +33,41 @@ def _mock_rlhf_dataset():
     dataset.image_key = "images"
     dataset.video_key = "videos"
     dataset.audio_key = "audios"
+    dataset.audio_root = None
     dataset.processor = object()
     return dataset
+
+
+def test_build_messages_resolves_relative_audio_from_audio_root(tmp_path):
+    dataset = _mock_rlhf_dataset()
+    dataset.audio_root = os.fspath(tmp_path)
+    example = {
+        "prompt": [{"role": "user", "content": "Transcribe <audio>"}],
+        "audios": ["rl/audio/ta/example.wav"],
+    }
+
+    messages = dataset._build_messages(example, key=dataset.prompt_key)
+
+    assert messages[0]["content"] == [
+        {"type": "text", "text": "Transcribe "},
+        {"type": "audio", "audio": os.fspath(tmp_path / "rl/audio/ta/example.wav")},
+    ]
+
+
+@pytest.mark.parametrize(
+    "audio",
+    [
+        "/absolute/audio.wav",
+        "file:///absolute/audio.wav",
+        "https://example.com/audio.wav",
+        {"audio_url": "https://example.com/audio.wav"},
+    ],
+)
+def test_audio_root_preserves_absolute_paths_and_urls(tmp_path, audio):
+    dataset = _mock_rlhf_dataset()
+    dataset.audio_root = os.fspath(tmp_path)
+
+    assert dataset._resolve_audio_reference(audio) == audio
 
 
 def get_gsm8k_data():

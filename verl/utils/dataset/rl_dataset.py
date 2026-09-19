@@ -23,6 +23,7 @@ import traceback
 from collections import defaultdict
 from io import BytesIO
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import datasets
 import numpy as np
@@ -109,6 +110,8 @@ class RLHFDataset(Dataset):
         self.image_key = config.get("image_key", "images")
         self.video_key = config.get("video_key", "videos")
         self.audio_key = config.get("audio_key", "audios")
+        audio_root = config.get("audio_root", None)
+        self.audio_root = os.path.abspath(os.path.expanduser(audio_root)) if audio_root else None
         # Default to the processor's real patch_size to align with the rollout path.
         _default_patch_size = getattr(getattr(self.processor, "image_processor", None), "patch_size", 14)
         self.image_patch_size = config.get("image_patch_size") or _default_patch_size
@@ -378,7 +381,7 @@ class RLHFDataset(Dataset):
                     video_offset += 1
                 elif segment == "<audio>":
                     assert audio_offset < len(audios), f"audio_offset {audio_offset} >= len(audios) {len(audios)}"
-                    audio = audios[audio_offset]
+                    audio = self._resolve_audio_reference(audios[audio_offset])
                     if isinstance(audio, dict):
                         payload = dict(audio)
                         payload["type"] = "audio"
@@ -396,6 +399,28 @@ class RLHFDataset(Dataset):
         assert video_offset == len(videos), f"video_offset {video_offset} != len(videos) {len(videos)}"
         assert audio_offset == len(audios), f"audio_offset {audio_offset} != len(audios) {len(audios)}"
         return messages
+
+    def _resolve_audio_reference(self, audio: Any) -> Any:
+        """Resolve relative audio references against ``data.audio_root``."""
+        audio_root = getattr(self, "audio_root", None)
+        if not audio_root:
+            return audio
+
+        def resolve_path(value: Any) -> Any:
+            if not isinstance(value, str | os.PathLike):
+                return value
+            path = os.fspath(value)
+            if os.path.isabs(path) or urlparse(path).scheme:
+                return path
+            return os.path.join(audio_root, path)
+
+        if isinstance(audio, dict):
+            resolved = dict(audio)
+            for field in ("path", "audio", "audio_url"):
+                if field in resolved:
+                    resolved[field] = resolve_path(resolved[field])
+            return resolved
+        return resolve_path(audio)
 
     def __getitem__(self, item):
         """For rollout, apply_chat_template has been moved to AgentLoop, so we only return raw_prompt here."""
