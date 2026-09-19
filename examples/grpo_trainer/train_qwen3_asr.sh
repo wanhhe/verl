@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-click launcher for Qwen3-ASR-1.7B GRPO training (8 GPUs).
+# One-click launcher for Qwen3-ASR-1.7B GRPO training (1 GPU by default).
 #
 # Usage:
 #   bash examples/grpo_trainer/train_qwen3_asr.sh                 # train with defaults
@@ -16,21 +16,21 @@ VERL_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$VERL_ROOT"
 
 # ---- user-adjustable ----
-CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}
-LOG_DIR=${LOG_DIR:-/quark_speech_nas_zjk/users/wangzilin/wsc/logs}
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+LOG_DIR=${LOG_DIR:-/root/autodl-tmp/verl/logs}
 
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-128}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-32}
 ROLLOUT_N=${ROLLOUT_N:-6}                       # GRPO group size (Tongyi paper)
 ROLLOUT_TEMPERATURE=${ROLLOUT_TEMPERATURE:-1.0}
-ACTOR_LR=${ACTOR_LR:-1e-5}
+ACTOR_LR=${ACTOR_LR:-5e-6}
 KL_LOSS_COEF=${KL_LOSS_COEF:-0.001}
 CER_WEIGHT=${CER_WEIGHT:-0.6}                   # reward = CER + ordered-pronoun sequence score
 MATCH_WEIGHT=${MATCH_WEIGHT:-0.4}               # pronoun component weight (kept for CLI compatibility)
 PRONOUN_EXACT_BONUS=${PRONOUN_EXACT_BONUS:-0.5}
 MAX_PROMPT_LENGTH=${MAX_PROMPT_LENGTH:-4096}
 MAX_RESPONSE_LENGTH=${MAX_RESPONSE_LENGTH:-256}
-TOTAL_EPOCHS=${TOTAL_EPOCHS:-3}
+TOTAL_EPOCHS=${TOTAL_EPOCHS:-2}
 SAVE_FREQ=${SAVE_FREQ:-20}
 TEST_FREQ=${TEST_FREQ:-5}
 # disable = fresh training from MODEL_PATH weights only (no auto-resume);
