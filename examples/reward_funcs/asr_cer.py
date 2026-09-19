@@ -23,6 +23,11 @@ from typing import Any
 
 _LANGUAGE_PREFIX_RE = re.compile(r"^language\s+\S+<asr_text>\s*", flags=re.IGNORECASE)
 _PRONOUN_CHARS = frozenset("他她它")
+_PRONOUN_METRIC_NAMES = {
+    "他": ("he_recall", "he_active"),
+    "她": ("she_recall", "she_active"),
+    "它": ("it_recall", "it_active"),
+}
 
 
 def _clip01(value: float) -> float:
@@ -109,6 +114,79 @@ def _pronoun_sequence(value: Any) -> list[str]:
     return [char for item in items for char in str(item) if char in _PRONOUN_CHARS]
 
 
+def _pronoun_class_recalls(reference: list[str], predicted: list[str]) -> dict[str, float]:
+    """Return class recalls from a minimum-edit alignment of two pronoun sequences.
+
+    When several minimum-edit alignments exist, prefer the one with the most
+    exact matches.  This keeps the class recalls consistent with the ordered
+    Levenshtein reward while still crediting correctly aligned subsequences.
+    Classes absent from the reference receive recall zero and an explicit
+    ``*_active`` value of zero so downstream aggregation can mask them.
+    """
+    rows = len(reference) + 1
+    columns = len(predicted) + 1
+    costs = [[0] * columns for _ in range(rows)]
+    matches = [[0] * columns for _ in range(rows)]
+    parents = [[""] * columns for _ in range(rows)]
+
+    for row in range(1, rows):
+        costs[row][0] = row
+        parents[row][0] = "delete"
+    for column in range(1, columns):
+        costs[0][column] = column
+        parents[0][column] = "insert"
+
+    operation_priority = {"match": 0, "substitute": 1, "delete": 2, "insert": 3}
+    for row in range(1, rows):
+        for column in range(1, columns):
+            is_match = reference[row - 1] == predicted[column - 1]
+            diagonal_operation = "match" if is_match else "substitute"
+            candidates = [
+                (
+                    costs[row - 1][column - 1] + (not is_match),
+                    matches[row - 1][column - 1] + int(is_match),
+                    diagonal_operation,
+                ),
+                (costs[row - 1][column] + 1, matches[row - 1][column], "delete"),
+                (costs[row][column - 1] + 1, matches[row][column - 1], "insert"),
+            ]
+            cost, match_count, operation = min(
+                candidates,
+                key=lambda item: (item[0], -item[1], operation_priority[item[2]]),
+            )
+            costs[row][column] = cost
+            matches[row][column] = match_count
+            parents[row][column] = operation
+
+    matched_by_class = {pronoun: 0 for pronoun in _PRONOUN_METRIC_NAMES}
+    row = len(reference)
+    column = len(predicted)
+    while row or column:
+        operation = parents[row][column]
+        if operation == "match":
+            matched_by_class[reference[row - 1]] += 1
+            row -= 1
+            column -= 1
+        elif operation == "substitute":
+            row -= 1
+            column -= 1
+        elif operation == "delete":
+            row -= 1
+        elif operation == "insert":
+            column -= 1
+        else:  # pragma: no cover - only reachable for an invalid DP table
+            raise RuntimeError(f"invalid pronoun alignment operation: {operation!r}")
+
+    result: dict[str, float] = {}
+    for pronoun, (recall_name, active_name) in _PRONOUN_METRIC_NAMES.items():
+        reference_count = reference.count(pronoun)
+        result[active_name] = float(reference_count > 0)
+        result[recall_name] = (
+            float(matched_by_class[pronoun] / reference_count) if reference_count else 0.0
+        )
+    return result
+
+
 def _weighted_average(components: Sequence[tuple[float, float]]) -> float:
     if any(weight < 0.0 for _, weight in components):
         raise ValueError("reward weights must be non-negative")
@@ -149,13 +227,14 @@ def compute_score(
         pronoun_exact_bonus * pronoun_exact
         + (1.0 - pronoun_exact_bonus) * pronoun_similarity
     )
+    pronoun_class_metrics = _pronoun_class_recalls(reference_pronouns, predicted_pronouns)
 
     active_components = [(accuracy, cer_weight)]
     if reference_pronouns:
         active_components.append((pronoun_score, match_weight))
     score = _weighted_average(active_components)
 
-    return {
+    result = {
         "score": float(score),
         "accuracy": float(accuracy),
         "cer": float(cer),
@@ -165,4 +244,7 @@ def compute_score(
         "pronoun_distance": float(pronoun_distance),
         "pronoun_ref_count": float(len(reference_pronouns)),
         "pronoun_pred_count": float(len(predicted_pronouns)),
+        "pronoun_active": float(bool(reference_pronouns)),
     }
+    result.update(pronoun_class_metrics)
+    return result

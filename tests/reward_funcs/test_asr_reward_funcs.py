@@ -28,6 +28,11 @@ def pronoun_reward():
     return _load_reward_module("asr_cer")
 
 
+@pytest.fixture(scope="module")
+def mixed_reward():
+    return _load_reward_module("asr_mixed")
+
+
 def test_context_reward_is_one_for_a_perfect_hypothesis(context_reward):
     result = context_reward.compute_score(
         data_source="context_rl",
@@ -126,6 +131,12 @@ def test_pronoun_reward_is_one_for_exact_order(pronoun_reward):
     assert result["score"] == pytest.approx(1.0)
     assert result["pronoun_exact"] == pytest.approx(1.0)
     assert result["pronoun_distance"] == pytest.approx(0.0)
+    assert result["he_recall"] == pytest.approx(1.0)
+    assert result["she_recall"] == pytest.approx(1.0)
+    assert result["it_recall"] == pytest.approx(0.0)
+    assert result["he_active"] == pytest.approx(1.0)
+    assert result["she_active"] == pytest.approx(1.0)
+    assert result["it_active"] == pytest.approx(0.0)
     assert all(isinstance(value, float) for value in result.values())
 
 
@@ -171,3 +182,59 @@ def test_pronoun_reward_falls_back_to_cer_without_pronoun_labels(pronoun_reward)
 
     assert result["score"] == pytest.approx(result["accuracy"])
     assert result["score"] == pytest.approx(1.0)
+    assert result["pronoun_active"] == pytest.approx(0.0)
+    assert result["he_active"] == pytest.approx(0.0)
+    assert result["she_active"] == pytest.approx(0.0)
+    assert result["it_active"] == pytest.approx(0.0)
+
+
+def test_pronoun_class_recalls_follow_edit_alignment(pronoun_reward):
+    result = pronoun_reward.compute_score(
+        "cmrc2019_coref",
+        "她告诉她它坏了",
+        "她告诉他它坏了",
+        {"pronoun": ["她", "他", "它"]},
+    )
+
+    assert result["pronoun_distance"] == pytest.approx(1.0)
+    assert result["he_recall"] == pytest.approx(0.0)
+    assert result["she_recall"] == pytest.approx(1.0)
+    assert result["it_recall"] == pytest.approx(1.0)
+    assert result["he_active"] == pytest.approx(1.0)
+    assert result["she_active"] == pytest.approx(1.0)
+    assert result["it_active"] == pytest.approx(1.0)
+
+
+def test_mixed_reward_returns_one_fixed_numeric_schema(mixed_reward):
+    pronoun = mixed_reward.compute_score(
+        "cmrc2019_coref",
+        "她把书递给他",
+        "她把书递给他",
+        {"pronoun": ["她", "他"]},
+    )
+    context = mixed_reward.compute_score(
+        "context_rl",
+        "我想参观苏州博物馆",
+        "我想参观苏州博物馆",
+        {"must_emit": ["苏州博物馆"], "must_reject": ["苏州博务馆"]},
+    )
+
+    assert pronoun.keys() == context.keys()
+    assert all(isinstance(value, float) for value in pronoun.values())
+    assert all(isinstance(value, float) for value in context.values())
+
+    assert pronoun["pronoun_active"] == pytest.approx(1.0)
+    assert pronoun["entity_active"] == pytest.approx(0.0)
+    assert pronoun["reject_active"] == pytest.approx(0.0)
+    assert pronoun["entity_score"] == pytest.approx(0.0)
+
+    assert context["pronoun_active"] == pytest.approx(0.0)
+    assert context["entity_active"] == pytest.approx(1.0)
+    assert context["reject_active"] == pytest.approx(1.0)
+    assert context["pronoun_score"] == pytest.approx(0.0)
+    assert context["score"] == pytest.approx(1.0)
+
+
+def test_mixed_reward_rejects_unknown_data_source(mixed_reward):
+    with pytest.raises(ValueError, match="unsupported ASR reward data_source"):
+        mixed_reward.compute_score("unknown", "", "", {})
