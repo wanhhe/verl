@@ -129,7 +129,11 @@ _MODEL_TYPE_TO_FAMILY: dict[str, ContinuousTokenModelFamily] = {
     "deepseek_v2": ContinuousTokenModelFamily.DEEPSEEK,
     "deepseek_v3": ContinuousTokenModelFamily.DEEPSEEK,
     "deepseek_v4": ContinuousTokenModelFamily.DEEPSEEKV4,
-    # Vision-language models. The processor is still required at construction.
+    # Multimodal models. The processor is still required at construction.
+    # Qwen3-ASR uses the generic processor-backed builder: it has the same
+    # continuous-token contract but supplies audio through ``feature_extractor``
+    # rather than images through ``image_processor``.
+    "qwen3_asr": ContinuousTokenModelFamily.VL_DEFAULT,
     "qwen2_vl": ContinuousTokenModelFamily.QWEN_VL,
     "qwen2_5_vl": ContinuousTokenModelFamily.QWEN25_VL,
     "qwen3_vl": ContinuousTokenModelFamily.QWEN3_VL,
@@ -311,8 +315,19 @@ def create_continuous_token_builder(
 
 
 def _is_multimodal_processor(processor: Any | None) -> bool:
-    """Whether ``processor`` is a multimodal processor (has an image processor)."""
-    return processor is not None and getattr(processor, "image_processor", None) is not None
+    """Whether ``processor`` handles any non-text modality.
+
+    Vision processors expose ``image_processor`` (and sometimes
+    ``video_processor``), while speech processors such as Qwen3-ASR expose only
+    ``feature_extractor``. Treat all of them as multimodal so unknown but
+    processor-backed model types can use the generic multimodal builder.
+    """
+    if processor is None:
+        return False
+    return any(
+        getattr(processor, attribute, None) is not None
+        for attribute in ("image_processor", "video_processor", "feature_extractor")
+    )
 
 
 def _normalize_hf_model_type(hf_model_type: str | None) -> str | None:

@@ -29,6 +29,7 @@ from verl.utils.tokenizer.continuous_token import (
     MiniMaxContinuousTokenBuilder,
     QwenContinuousTokenBuilder,
     QwenVLContinuousTokenBuilder,
+    VLContinuousTokenBuilder,
 )
 from verl.utils.tokenizer.continuous_token_wiring import (
     CONTINUOUS_TOKEN_BUILDER_FAMILIES,
@@ -337,6 +338,7 @@ def test_builtin_family_class_mapping(family, builder_cls):
         ("deepseek_v3", ContinuousTokenModelFamily.DEEPSEEK),
         ("deepseek_v4", ContinuousTokenModelFamily.DEEPSEEKV4),
         # VL families.
+        ("qwen3_asr", ContinuousTokenModelFamily.VL_DEFAULT),
         ("qwen2_5_vl", ContinuousTokenModelFamily.QWEN25_VL),
         ("qwen3_vl", ContinuousTokenModelFamily.QWEN3_VL),
         ("qwen3_vl_moe", ContinuousTokenModelFamily.QWEN3_VL),
@@ -418,6 +420,21 @@ def test_unknown_model_with_non_multimodal_processor_uses_default_text_builder(c
     assert isinstance(builder, ContinuousTokenBuilder)
     assert "unknown_text_model" in caplog.text
     assert "default" in caplog.text
+
+
+def test_qwen3_asr_feature_extractor_uses_vl_default_builder():
+    class AudioProcessor:
+        feature_extractor = type("FeatureExtractor", (), {"sampling_rate": 16000})()
+
+    builder = create_continuous_token_builder(
+        _TemplateTokenizer(),
+        hf_model_type="qwen3_asr",
+        processor=AudioProcessor(),
+    )
+
+    assert isinstance(builder, VLContinuousTokenBuilder)
+    assert builder.supports_multimodal() is True
+    assert builder.mm_processor_kwargs["sampling_rate"] == 16000
 
 
 def test_default_builder_creation_forwards_kwargs():
