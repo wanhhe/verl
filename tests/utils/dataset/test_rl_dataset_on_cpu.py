@@ -54,6 +54,48 @@ def test_build_messages_resolves_relative_audio_from_audio_root(tmp_path):
     ]
 
 
+def test_build_messages_appends_semantic_hints_to_context_without_mutating_example():
+    dataset = _mock_rlhf_dataset()
+    example = {
+        "prompt": [
+            {"role": "system", "content": "吉米很想弄清楚这是什么。"},
+            {"role": "user", "content": "<audio>"},
+        ],
+        "context": "吉米很想弄清楚这是什么。",
+        "semantic_hint": ["他找来一个玻璃罐。", "这个小家伙需要一个家。"],
+        "audios": ["/tmp/example.wav"],
+    }
+    original_prompt = deepcopy(example["prompt"])
+
+    messages = dataset._build_messages(example, key=dataset.prompt_key)
+
+    assert messages[0]["content"] == [
+        {
+            "type": "text",
+            "text": (
+                "吉米很想弄清楚这是什么。\n"
+                "他找来一个玻璃罐。\n"
+                "这个小家伙需要一个家。"
+            ),
+        }
+    ]
+    assert messages[1]["content"] == [{"type": "audio", "audio": "/tmp/example.wav"}]
+    assert example["prompt"] == original_prompt
+
+
+def test_build_messages_leaves_context_unchanged_for_empty_semantic_hint():
+    dataset = _mock_rlhf_dataset()
+    example = {
+        "prompt": [{"role": "system", "content": "一段原始上下文。"}],
+        "context": "一段原始上下文。",
+        "semantic_hint": [],
+    }
+
+    messages = dataset._build_messages(example, key=dataset.prompt_key)
+
+    assert messages == example["prompt"]
+
+
 @pytest.mark.parametrize(
     "audio",
     [

@@ -265,8 +265,9 @@ class RLHFDataset(Dataset):
                         apply_kwargs.pop("return_dict", None)
                         apply_kwargs.pop("return_tensors", None)
 
+                        messages = self._build_messages(doc, key=prompt_key)
                         tokenized_prompt = tokenizer.apply_chat_template(
-                            doc[prompt_key], add_generation_prompt=True, tokenize=True, **apply_kwargs
+                            messages, add_generation_prompt=True, tokenize=True, **apply_kwargs
                         )
                         return len(normalize_token_ids(tokenized_prompt))
                     except Exception:
@@ -306,7 +307,11 @@ class RLHFDataset(Dataset):
         return len(self.dataframe)
 
     def _build_messages(self, example: dict, key: str):
-        """Replace multimodal placeholders in messages with structured content.
+        """Augment context and replace multimodal placeholders in messages.
+
+        If a row has a non-empty ``semantic_hint`` field, its entries are
+        appended directly to the row's ``context`` inside the prompt. The
+        stored ``context`` and ``prompt`` fields are not mutated.
 
         This is required by processor.apply_chat_template.
         - <image>: {"type": "image", "image": image} or {"type": "image", **image}
@@ -319,7 +324,8 @@ class RLHFDataset(Dataset):
         Returns:
             messages: List of messages with replaced placeholder.
         """
-        messages: list = example[key]
+        messages: list = copy.deepcopy(example[key])
+        self._append_semantic_hints(messages, example)
         # When concatenating multimodal datasets, get will return None for samples without a modality column.
         images = example.get(self.image_key, None) or []
         videos = example.get(self.video_key, None) or []
@@ -399,6 +405,49 @@ class RLHFDataset(Dataset):
         assert video_offset == len(videos), f"video_offset {video_offset} != len(videos) {len(videos)}"
         assert audio_offset == len(audios), f"audio_offset {audio_offset} != len(audios) {len(audios)}"
         return messages
+
+    @staticmethod
+    def _append_semantic_hints(messages: list[dict], example: dict) -> None:
+        """Append semantic hints to the context occurrence in a copied prompt."""
+        semantic_hints = example.get("semantic_hint")
+        if semantic_hints is None:
+            return
+        if isinstance(semantic_hints, np.ndarray):
+            semantic_hints = semantic_hints.tolist()
+        elif isinstance(semantic_hints, str):
+            semantic_hints = [semantic_hints]
+        if not isinstance(semantic_hints, list | tuple):
+            raise TypeError("semantic_hint must be a string or a sequence of strings")
+
+        hints = []
+        for hint in semantic_hints:
+            if not isinstance(hint, str):
+                raise TypeError("every semantic_hint entry must be a string")
+            if stripped_hint := hint.strip():
+                hints.append(stripped_hint)
+        if not hints:
+            return
+
+        context = example.get("context")
+        if not isinstance(context, str) or not context:
+            raise ValueError("a non-empty context is required when semantic_hint is non-empty")
+
+        augmented_context = "\n".join([context, *hints])
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, str) and context in content:
+                prefix, _, suffix = content.rpartition(context)
+                message["content"] = f"{prefix}{augmented_context}{suffix}"
+                return
+            if isinstance(content, list):
+                for item in content:
+                    text = item.get("text") if isinstance(item, dict) else None
+                    if isinstance(text, str) and context in text:
+                        prefix, _, suffix = text.rpartition(context)
+                        item["text"] = f"{prefix}{augmented_context}{suffix}"
+                        return
+
+        raise ValueError("context was not found in the prompt while appending semantic_hint")
 
     def _resolve_audio_reference(self, audio: Any) -> Any:
         """Resolve relative audio references against ``data.audio_root``."""
